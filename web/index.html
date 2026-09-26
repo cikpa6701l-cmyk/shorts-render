@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorts AI Studio</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0b10; color: #eee; font-family: system-ui, sans-serif; display: flex; justify-content: center; padding: 16px; }
+  main { width: 100%; max-width: 520px; }
+  h1 { font-size: 22px; margin: 8px 0 16px; }
+  h1 span { color: #7cf03c; }
+  textarea { width: 100%; min-height: 90px; background: #16161e; color: #eee; border: 1px solid #2a2a35; border-radius: 10px; padding: 12px; font-size: 15px; resize: vertical; }
+  .row { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  select, input[type=text] { background: #16161e; color: #eee; border: 1px solid #2a2a35; border-radius: 8px; padding: 9px 10px; font-size: 14px; }
+  select { flex: 1; }
+  label.ck { display: flex; align-items: center; gap: 6px; font-size: 14px; background: #16161e; border: 1px solid #2a2a35; border-radius: 8px; padding: 8px 10px; }
+  button { width: 100%; background: #7cf03c; color: #0b0b10; border: 0; border-radius: 10px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #status { margin: 14px 0; font-size: 14px; color: #aab; white-space: pre-wrap; }
+  video { width: 100%; border-radius: 12px; background: #000; margin-top: 6px; }
+  a.dl { display: block; text-align: center; margin-top: 10px; background: #16161e; border: 1px solid #7cf03c; color: #7cf03c; border-radius: 10px; padding: 12px; text-decoration: none; font-weight: 600; }
+  .note { font-size: 12px; color: #667; margin-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shorts <span>AI</span> Studio</h1>
+  <textarea id="prompt" placeholder="Describe your short video... (e.g. a young man walks toward the camera, wind in his shirt, cinematic light)"></textarea>
+  <div class="row">
+    <select id="ratio"><option value="9:16">9:16 Shorts</option><option value="16:9">16:9 Wide</option><option value="1:1">1:1 Square</option></select>
+    <select id="seconds"><option value="5">5 sec</option><option value="10" selected>10 sec</option><option value="15">15 sec</option><option value="20">20 sec</option><option value="30">30 sec</option></select>
+    <select id="quality"><option value="fast" selected>Fast</option><option value="high">High</option></select>
+  </div>
+  <div class="row">
+    <label class="ck"><input type="checkbox" id="voice" checked> Tamil voice</label>
+    <label class="ck"><input type="checkbox" id="subtitles" checked> Subtitles</label>
+  </div>
+  <div class="row"><input type="text" id="owner" placeholder="Owner passcode" style="flex:1"></div>
+  <button id="go">Generate video</button>
+  <div id="status"></div>
+  <div id="out"></div>
+  <div class="note">Free engines: LTX-2 (primary) with automatic Pixazo fallback. ~2-4 min per 10s clip. Video saves as MP4.</div>
+</main>
+<script>
+const go = document.getElementById('go'), st = document.getElementById('status'), out = document.getElementById('out');
+const RAW = 'https://raw.githubusercontent.com/cikpa6701l-cmyk/shorts-render/main/status/';
+let poll = null;
+go.onclick = async () => {
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) { st.textContent = 'Type a prompt first'; return; }
+  go.disabled = true; out.innerHTML = ''; st.textContent = 'Starting...';
+  try {
+    const r = await fetch('/api/generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      prompt, ratio: ratio.value, seconds: seconds.value, quality: quality.value,
+      voice: voice.checked, subtitles: subtitles.checked, owner: owner.value }) });
+    const d = await r.json();
+    if (!r.ok) { st.textContent = 'Error: ' + (d.error || r.status); go.disabled = false; return; }
+    st.textContent = 'Queued. Rendering (this takes a few minutes)...';
+    poll = setInterval(() => check(d.id), 8000);
+    check(d.id);
+  } catch (e) { st.textContent = 'Network error'; go.disabled = false; }
+};
+async function check(id) {
+  try {
+    const r = await fetch(RAW + id + '.json?x=' + Date.now());
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.status === 'ready') {
+      clearInterval(poll); go.disabled = false;
+      st.textContent = 'Done! Engine: ' + (d.engine || '');
+      out.innerHTML = '<video controls playsinline src="' + d.video + '"></video><a class="dl" href="' + d.video + '" download>Download MP4</a>';
+    } else if (d.status === 'failed') {
+      clearInterval(poll); go.disabled = false;
+      st.textContent = 'Failed: ' + (d.error || '');
+    }
+  } catch (e) {}
+}
+</script>
+</body>
+</html>
