@@ -20,6 +20,9 @@ fs.mkdirSync(out('segs'), { recursive: true });
 
 const run = (args) => new Promise((res, rej) => execFile('ffmpeg', args, { timeout: 600000, maxBuffer: 8e6 },
   (e, so, se) => e ? rej(new Error((se || e.message).slice(-600))) : res(so)));
+const runCmd = (cmd, args) => new Promise((res, rej) => execFile(cmd, args, { timeout: 90000, maxBuffer: 8e6 },
+  (e, so, se) => e ? rej(new Error((se || e.message || cmd).slice(-300))) : res(so)));
+const BGM = path.join(process.cwd(), 'render', 'assets', 'bgm.mp3');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function status(stage, detail, extra) {
@@ -160,6 +163,13 @@ function subPng(text, width) {
 }
 
 async function tts(text) {
+  // edge-tts: free Microsoft Edge Tamil neural voice (no key needed)
+  try {
+    const f = out('vo_edge.mp3');
+    await runCmd('python3', ['-m', 'edge_tts', '--voice', 'ta-IN-ValluvarNeural', '--text', text.slice(0, 600), '--write-media', f]);
+    const buf = fs.readFileSync(f);
+    if (buf.length > 1000) return buf;
+  } catch (e) { console.log('[voice] edge-tts failed:', String(e.message || e).slice(0, 120)); }
   if (!POLL_KEY) return null;
   try {
     const r = await fetch('https://gen.pollinations.ai/v1/audio/speech', { method: 'POST',
@@ -260,7 +270,14 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     // regen: other segs are downloaded from KV by the workflow before this step
     const list = scenes.map((_, i) => `file '${out('segs', i + '.mp4')}'`).join('\n');
     fs.writeFileSync(out('list.txt'), list);
-    await run(['-f', 'concat', '-safe', '0', '-i', out('list.txt'), '-c', 'copy', '-movflags', '+faststart', '-y', out('final.mp4')]);
+    await run(['-f', 'concat', '-safe', '0', '-i', out('list.txt'), '-c', 'copy', '-movflags', '+faststart', '-y', out('joined.mp4')]);
+    if (fs.existsSync(BGM)) {
+      // free-licensed ambient bg (Kevin MacLeod, CC-BY 4.0) looped low under voice + soft bell at start
+      await run(['-i', out('joined.mp4'), '-stream_loop', '-1', '-i', BGM,
+        '-f', 'lavfi', '-t', '2.2', '-i', 'sine=frequency=880:sample_rate=44100',
+        '-filter_complex', '[1:a]volume=0.16[bg];[2:a]afade=t=out:st=0:d=2.2,volume=0.30[bell];[0:a][bg][bell]amix=inputs=3:duration=first:dropout_transition=2[a]',
+        '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', '-y', out('final.mp4')]);
+    } else { fs.renameSync(out('joined.mp4'), out('final.mp4')); }
     const buf = fs.readFileSync(out('final.mp4'));
     await status('Uploading', '');
     // Deliver via GitHub release asset (persistent public URL) + status JSON commit (UI polls raw file)

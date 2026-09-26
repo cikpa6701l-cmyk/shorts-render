@@ -16,7 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-core
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-core python3-pip && pip install --break-system-packages edge-tts
+      - run: curl -sSL -o render/assets-bgm.mp3 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Meditation%20Impromptu%2002.mp3' && mkdir -p render/assets && ffmpeg -y -v error -i render/assets-bgm.mp3 -t 90 -ac 1 -ar 44100 -b:a 64k render/assets/bgm.mp3 || true
       - run: cd render && npm install --no-audit --no-fund
       - name: regen - fetch existing segments
         if: ${{ github.event.inputs.job != '' }}
