@@ -1,0 +1,2 @@
+{ "name": "shorts-render", "private": true, "type": "module",
+  "dependencies": { "sharp": "^0.34.0", "@resvg/resvg-js": "^2.6.0" } }
