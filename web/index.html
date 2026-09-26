@@ -36,46 +36,73 @@
     <label class="ck"><input type="checkbox" id="voice" checked> Tamil voice</label>
     <label class="ck"><input type="checkbox" id="subtitles" checked> Subtitles</label>
   </div>
-  <div class="row"><input type="text" id="owner" placeholder="Owner passcode" style="flex:1"></div>
+  <div class="row"><input type="password" id="owner" autocomplete="off" placeholder="Owner passcode" style="flex:1"></div>
   <button id="go">Generate video</button>
   <div id="status"></div>
   <div id="out"></div>
-  <div class="note">Free engines: LTX-2 (primary) with automatic Pixazo fallback. ~2-4 min per 10s clip. Video saves as MP4.</div>
+  <h2 style="font-size:17px;margin-top:28px">My videos on this device</h2>
+  <div id="jobs"></div>
+  <div class="note">The job keeps running if you leave. My videos is saved on this device/browser. No guaranteed completion time on free engines.</div>
 </main>
 <script>
-const go = document.getElementById('go'), st = document.getElementById('status'), out = document.getElementById('out');
+const go = document.getElementById('go'), st = document.getElementById('status'), out = document.getElementById('out'), jobsEl = document.getElementById('jobs');
 const RAW = 'https://raw.githubusercontent.com/cikpa6701l-cmyk/shorts-render/main/status/';
-let poll = null;
+const KEY = 'shorts-studio-jobs-v1';
+let jobs = [];
+try { jobs = JSON.parse(localStorage.getItem(KEY) || '[]').filter(x => typeof x.id === 'string' && /^[a-z0-9]{6,32}$/.test(x.id)); } catch {}
+function saveJobs() { localStorage.setItem(KEY, JSON.stringify(jobs.slice(0, 30))); }
+function node(tag, text) { const el = document.createElement(tag); el.textContent = text; return el; }
+function showVideo(container, url) {
+  if (!/^https:\/\/github\.com\/cikpa6701l-cmyk\/shorts-render\/releases\/download\/videos\/job-[a-z0-9]+\.mp4$/.test(url)) return;
+  const video = document.createElement('video'); video.controls = true; video.playsInline = true; video.src = url;
+  const link = document.createElement('a'); link.className = 'dl'; link.href = url; link.download = ''; link.textContent = 'Download MP4';
+  container.append(video, link);
+}
+function render() {
+  jobsEl.replaceChildren();
+  for (const j of jobs) {
+    const card = node('div',''); card.style.cssText = 'border:1px solid #2a2a35;border-radius:10px;padding:12px;margin:10px 0';
+    const label = node('div',j.prompt || 'Video'); label.style.cssText = 'font-size:14px;overflow-wrap:anywhere;margin-bottom:8px';
+    const state = node('div',j.status === 'ready' ? 'Ready' : j.status === 'failed' ? 'Failed: '+(j.error || 'Please try again') : 'Rendering...');
+    state.style.cssText = 'font-size:13px;color:#aab'; card.append(label,state);
+    if (j.status === 'ready' && j.video) showVideo(card,j.video);
+    jobsEl.append(card);
+  }
+}
+async function check(id) {
+  try {
+    const r = await fetch(RAW + id + '.json?x=' + Date.now(), {cache:'no-store'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const j = jobs.find(x => x.id === id); if (!j || !['ready','failed','queued'].includes(d.status)) return;
+    j.status = d.status; j.error = String(d.error || '').slice(0, 200); j.video = d.video || '';
+    if (d.status === 'ready' || d.status === 'failed') {
+      go.disabled = false;
+      if (id === jobs[0].id) {
+        st.textContent = d.status === 'ready' ? 'Done! Engine: '+(d.engine || '') : 'Failed: '+j.error;
+        out.replaceChildren(); if (d.status === 'ready') showVideo(out,j.video);
+      }
+    }
+    saveJobs(); render();
+  } catch (e) {}
+}
+async function checkAll() { for (const j of jobs) if (j.status !== 'ready' && j.status !== 'failed') await check(j.id); }
+render(); checkAll(); setInterval(checkAll,8000);
 go.onclick = async () => {
   const prompt = document.getElementById('prompt').value.trim();
   if (!prompt) { st.textContent = 'Type a prompt first'; return; }
-  go.disabled = true; out.innerHTML = ''; st.textContent = 'Starting...';
+  go.disabled = true; out.replaceChildren(); st.textContent = 'Starting...';
   try {
     const r = await fetch('/api/generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
       prompt, ratio: ratio.value, seconds: seconds.value, quality: quality.value,
       voice: voice.checked, subtitles: subtitles.checked, owner: owner.value }) });
     const d = await r.json();
     if (!r.ok) { st.textContent = 'Error: ' + (d.error || r.status); go.disabled = false; return; }
-    st.textContent = 'Queued. Rendering (this takes a few minutes)...';
-    poll = setInterval(() => check(d.id), 8000);
-    check(d.id);
-  } catch (e) { st.textContent = 'Network error'; go.disabled = false; }
+    jobs.unshift({id:d.id,prompt,status:'queued',ts:Date.now()}); saveJobs(); render();
+    st.textContent = 'Queued. Rendering in the background - you can close this page and return later.';
+    go.disabled = false; check(d.id);
+  } catch (e) { st.textContent = 'Network error. If submitted, check My videos before retrying.'; go.disabled = false; }
 };
-async function check(id) {
-  try {
-    const r = await fetch(RAW + id + '.json?x=' + Date.now());
-    if (!r.ok) return;
-    const d = await r.json();
-    if (d.status === 'ready') {
-      clearInterval(poll); go.disabled = false;
-      st.textContent = 'Done! Engine: ' + (d.engine || '');
-      out.innerHTML = '<video controls playsinline src="' + d.video + '"></video><a class="dl" href="' + d.video + '" download>Download MP4</a>';
-    } else if (d.status === 'failed') {
-      clearInterval(poll); go.disabled = false;
-      st.textContent = 'Failed: ' + (d.error || '');
-    }
-  } catch (e) {}
-}
 </script>
 </body>
 </html>

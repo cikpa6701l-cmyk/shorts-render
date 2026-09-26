@@ -1,4 +1,4 @@
-// Shorts AI Studio render pipeline - runs on GitHub Actions. Node 22, ffmpeg preinstalled.
+// Shorts AI Studio render pipeline - runs on GitHub Actions. Node 22; workflow installs ffmpeg.
 // Input: env JOB (JSON). Output: out/<id>.mp4 + out/segs/*, then POSTs everything to the CF worker.
 import fs from 'fs';
 import path from 'path';
@@ -49,40 +49,33 @@ async function hfUpload(buf, name) {
   const arr = await r.json();
   return arr[0];
 }
+let ltxUnavailable = false;
 async function hfVideoOnce(serverPath, motionPrompt, seconds, height, width, enhance) {
+  // A down ZeroGPU queue should not hold each scene for minutes. One bounded attempt per job.
+  const deadline = AbortSignal.timeout(30000);
   const data = [{ path: serverPath, meta: { _type: 'gradio.FileData' } }, motionPrompt, seconds, enhance !== false, Math.floor(Math.random() * 1e9), true, height, width];
   const headers = { 'content-type': 'application/json' };
   if (HF_TOKEN) headers['Authorization'] = 'Bearer ' + HF_TOKEN;
-  const r = await fetch(HF_SPACE + '/gradio_api/call/generate_video', { method: 'POST', headers, body: JSON.stringify({ data }), signal: AbortSignal.timeout(30000) });
+  const r = await fetch(HF_SPACE + '/gradio_api/call/generate_video', { method: 'POST', headers, body: JSON.stringify({ data }), signal: deadline });
   if (!r.ok) throw new Error('hf call HTTP ' + r.status);
   const { event_id } = await r.json();
-  for (let i = 0; i < 120; i++) {
-    const rr = await fetch(`${HF_SPACE}/gradio_api/call/generate_video/${event_id}`, { headers });
-    const txt = await rr.text();
-    if (txt.includes('event: complete')) {
-      const dataLine = txt.split('\n').filter(l => l.startsWith('data: ')).pop();
-      const payload = JSON.parse(dataLine.slice(6));
-      const v = payload[0] && (payload[0].video || payload[0]);
-      const vurl = v && (v.url || v.path);
-      if (!vurl) throw new Error('hf complete but no video url');
-      const full = vurl.startsWith('http') ? vurl : HF_SPACE + '/gradio_api/file=' + vurl;
-      const dl = await fetch(full, { headers });
-      if (!dl.ok) throw new Error('hf download HTTP ' + dl.status);
-      return Buffer.from(await dl.arrayBuffer());
-    }
-    if (txt.includes('event: error')) throw new Error('hf generation error');
-    await sleep(5000);
-  }
-  throw new Error('hf timeout');
+  if (!event_id) throw new Error('hf no event id');
+  const rr = await fetch(`${HF_SPACE}/gradio_api/call/generate_video/${event_id}`, { headers, signal: deadline });
+  if (!rr.ok) throw new Error('hf status HTTP ' + rr.status);
+  const txt = await rr.text();
+  if (txt.includes('event: error')) throw new Error('hf generation error');
+  if (!txt.includes('event: complete')) throw new Error('hf did not complete in fast health window');
+  const dataLine = txt.split('\n').filter(l => l.startsWith('data: ')).pop();
+  const payload = JSON.parse(dataLine.slice(6));
+  const v = payload[0] && (payload[0].video || payload[0]);
+  const vurl = v && (v.url || v.path);
+  if (!vurl) throw new Error('hf complete but no video url');
+  const full = vurl.startsWith('http') ? vurl : HF_SPACE + '/gradio_api/file=' + vurl;
+  const dl = await fetch(full, { headers, signal: AbortSignal.timeout(30000) });
+  if (!dl.ok) throw new Error('hf download HTTP ' + dl.status);
+  return Buffer.from(await dl.arrayBuffer());
 }
-async function hfVideo(...a) {
-  let lastErr;
-  for (let t = 0; t < 3; t++) {
-    try { return await hfVideoOnce(...a); }
-    catch (e) { lastErr = e; if (/HTTP 401|403/.test(e.message)) throw e; await sleep(45000 + t * 45000); }
-  }
-  throw new Error('Video engine busy or restarting after 3 tries (' + lastErr.message + '). Scene-wise retry available.');
-}
+async function hfVideo(...a) { return await hfVideoOnce(...a); }
 
 // Pixazo free-tier LTX fallback: text-to-video only, landscape 1280x704 ~4.4s, no audio.
 async function pixazoVideo(promptText) {
@@ -180,9 +173,11 @@ async function tts(text) {
 async function buildSeg(i, imgBuf, scene, per, hh, ww) {
   let clip, usedFallback = false;
   try {
+    if (ltxUnavailable) throw new Error('LTX-2 unavailable earlier in this job');
     const sp = await hfUpload(imgBuf, 'scene' + i + '.jpg');
     clip = await hfVideo(sp, scene.motion + ', cinematic realistic motion', Math.min(10, Math.max(3, Math.round(per))), hh, ww, job.enhance);
   } catch (e) {
+    ltxUnavailable = true;
     console.log('[fallback] LTX-2 HF failed, switching to Pixazo ltx-video:', String(e.message || e).slice(0, 160));
     await status('Generating real motion (backup engine)', `scene ${i + 1} - main engine down, using backup`);
     clip = await pixazoVideo(scene.visual + ', ' + scene.motion);
