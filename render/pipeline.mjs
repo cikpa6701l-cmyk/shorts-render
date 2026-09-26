@@ -12,6 +12,7 @@ const CB = process.env.CB_URL;           // e.g. https://shorts-ai-studio.pages.
 const SECRET = process.env.JOB_SECRET;
 const HF_TOKEN = process.env.HF_TOKEN || '';
 const POLL_KEY = process.env.POLL_KEY || '';
+const PIXAZO_KEY = process.env.PIXAZO_KEY || '';
 const HF_SPACE = process.env.HF_SPACE_URL || 'https://lightricks-ltx-2-3.hf.space';
 const FONT = path.join(process.cwd(), 'render', 'NotoSansTamil-Regular.ttf');
 const out = (...p) => path.join('/tmp', 'job-' + id, ...p);
@@ -41,9 +42,10 @@ async function fetchRetry(url, opts, tries, label) {
 }
 
 async function hfUpload(buf, name) {
+  const to = AbortSignal.timeout(45000);
   const fd = new FormData();
   fd.append('files', new Blob([buf], { type: 'image/jpeg' }), name);
-  const r = await fetchRetry(HF_SPACE + '/gradio_api/upload', { method: 'POST', body: fd }, 3, 'upload');
+  const r = await fetchRetry(HF_SPACE + '/gradio_api/upload', { method: 'POST', body: fd, signal: to }, 3, 'upload');
   const arr = await r.json();
   return arr[0];
 }
@@ -51,7 +53,7 @@ async function hfVideoOnce(serverPath, motionPrompt, seconds, height, width, enh
   const data = [{ path: serverPath, meta: { _type: 'gradio.FileData' } }, motionPrompt, seconds, enhance !== false, Math.floor(Math.random() * 1e9), true, height, width];
   const headers = { 'content-type': 'application/json' };
   if (HF_TOKEN) headers['Authorization'] = 'Bearer ' + HF_TOKEN;
-  const r = await fetch(HF_SPACE + '/gradio_api/call/generate_video', { method: 'POST', headers, body: JSON.stringify({ data }) });
+  const r = await fetch(HF_SPACE + '/gradio_api/call/generate_video', { method: 'POST', headers, body: JSON.stringify({ data }), signal: AbortSignal.timeout(30000) });
   if (!r.ok) throw new Error('hf call HTTP ' + r.status);
   const { event_id } = await r.json();
   for (let i = 0; i < 120; i++) {
@@ -80,6 +82,29 @@ async function hfVideo(...a) {
     catch (e) { lastErr = e; if (/HTTP 401|403/.test(e.message)) throw e; await sleep(45000 + t * 45000); }
   }
   throw new Error('Video engine busy or restarting after 3 tries (' + lastErr.message + '). Scene-wise retry available.');
+}
+
+// Pixazo free-tier LTX fallback: text-to-video only, landscape 1280x704 ~4.4s, no audio.
+async function pixazoVideo(promptText) {
+  if (!PIXAZO_KEY) throw new Error('no pixazo key');
+  const h = { 'content-type': 'application/json', 'Ocp-Apim-Subscription-Key': PIXAZO_KEY };
+  const r = await fetch('https://gateway.pixazo.ai/ltx-video/v1/text-to-video', { method: 'POST', headers: h,
+    body: JSON.stringify({ prompt: String(promptText).slice(0, 800), duration: 6 }) });
+  if (!r.ok) throw new Error('pixazo submit HTTP ' + r.status);
+  const { request_id } = await r.json();
+  if (!request_id) throw new Error('pixazo no request_id');
+  for (let i = 0; i < 40; i++) {
+    await sleep(15000);
+    const sr = await fetch('https://gateway.pixazo.ai/v2/requests/status/' + request_id, { headers: h });
+    const d = await sr.json();
+    if (d.status === 'COMPLETED' && d.output && d.output.media_url && d.output.media_url[0]) {
+      const dl = await fetch(d.output.media_url[0]);
+      if (!dl.ok) throw new Error('pixazo download HTTP ' + dl.status);
+      return Buffer.from(await dl.arrayBuffer());
+    }
+    if (d.status === 'ERROR' || d.status === 'FAILED') throw new Error('pixazo ' + d.status + ': ' + (d.error || ''));
+  }
+  throw new Error('pixazo timeout');
 }
 
 const CAMERA = { auto: '', pushin: 'slow cinematic camera push in', pullout: 'slow camera pull back revealing the scene', pan: 'smooth horizontal camera pan', orbit: 'camera slowly orbiting the subject', tracking: 'camera tracking alongside the action', static: 'static camera, only the scene moves' };
@@ -153,9 +178,26 @@ async function tts(text) {
 }
 
 async function buildSeg(i, imgBuf, scene, per, hh, ww) {
-  const sp = await hfUpload(imgBuf, 'scene' + i + '.jpg');
-  const clip = await hfVideo(sp, scene.motion + ', cinematic realistic motion', Math.min(10, Math.max(3, Math.round(per))), hh, ww, job.enhance);
+  let clip, usedFallback = false;
+  try {
+    const sp = await hfUpload(imgBuf, 'scene' + i + '.jpg');
+    clip = await hfVideo(sp, scene.motion + ', cinematic realistic motion', Math.min(10, Math.max(3, Math.round(per))), hh, ww, job.enhance);
+  } catch (e) {
+    console.log('[fallback] LTX-2 HF failed, switching to Pixazo ltx-video:', String(e.message || e).slice(0, 160));
+    await status('Generating real motion (backup engine)', `scene ${i + 1} - main engine down, using backup`);
+    clip = await pixazoVideo(scene.visual + ', ' + scene.motion);
+    usedFallback = true; globalThis._engineUsed = 'pixazo-ltx-fallback';
+  }
   fs.writeFileSync(out('clip' + i + '.mp4'), clip);
+  if (usedFallback) {
+    // pixazo output is 1280x704 landscape, no audio: center-crop to target ratio, scale to target dims, attach silence
+    const cw = Math.min(1280, Math.floor(704 * ww / hh / 2) * 2);
+    await run(['-i', out('clip' + i + '.mp4'), '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+      '-filter_complex', `[0:v]crop=${cw}:704,scale=${ww}:${hh}:flags=lanczos,setsar=1[v]`,
+      '-map', '[v]', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-shortest', '-y', out('clipn' + i + '.mp4')]);
+    fs.renameSync(out('clipn' + i + '.mp4'), out('clip' + i + '.mp4'));
+  }
   const args = ['-i', out('clip' + i + '.mp4')];
   let vmap = '0:v', extra = 0, fc = '';
   if (job.subtitles !== false && scene.text) {
@@ -197,6 +239,8 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
       scenes = await planScenes(Math.max(2, Math.min(6, Math.round(seconds / 5))));
     }
     const per = seconds / scenes.length;
+    var engineUsed = 'ltx2';
+    Object.defineProperty(globalThis, '_engineUsed', { get: () => engineUsed, set: v => { engineUsed = v; }, configurable: true });
     const todo = job.regen ? [job.regen] : scenes.map((_, i) => i);
     for (const i of todo) {
       await status(`Generating real motion (LTX-2)`, `scene ${i + 1} of ${scenes.length}`);
@@ -229,7 +273,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     for (let i = 0; i < scenes.length; i++) {
       segsMeta.push({ i, seg: fs.readFileSync(out('segs', i + '.mp4')).toString('base64'), img: fs.readFileSync(out('img' + i + '.jpg')).toString('base64') });
     }
-    const payload = { id, video: buf.toString('base64'), scenes, seconds, ratio, prompt: job.prompt, engine: 'ltx2', profile: job.profile || 'main', segs: segsMeta };
+    const payload = { id, video: buf.toString('base64'), scenes, seconds, ratio, prompt: job.prompt, engine: engineUsed, profile: job.profile || 'main', segs: segsMeta };
     const r = await fetch(CB + '/api/job-complete', { method: 'POST', headers: { 'content-type': 'application/json', 'x-job-secret': SECRET }, body: JSON.stringify(payload) });
     if (!r.ok) throw new Error('upload to app failed HTTP ' + r.status);
     await status('Done', '', { status: 'ready', size: buf.length });
