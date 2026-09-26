@@ -29,6 +29,16 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(ROOT, 'index.html')));
   }
+  if (req.method === 'GET' && u.pathname.startsWith('/api/status/')) {
+    const id = u.pathname.split('/').pop().replace(/[^a-z0-9]/g, '');
+    try {
+      const r = await gh(`https://api.github.com/repos/${REPO}/contents/status/${id}.json`);
+      if (!r.ok) { res.writeHead(404); return res.end('{"error":"not found"}'); }
+      const d = await r.json();
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(Buffer.from(d.content, 'base64').toString());
+    } catch (e) { res.writeHead(500); return res.end('{"error":"status"}'); }
+  }
   if (req.method === 'POST' && u.pathname === '/api/generate') {
     let body = '';
     req.on('data', c => body += c);

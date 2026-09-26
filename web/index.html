@@ -46,7 +46,7 @@
 </main>
 <script>
 const go = document.getElementById('go'), st = document.getElementById('status'), out = document.getElementById('out'), jobsEl = document.getElementById('jobs');
-const RAW = 'https://raw.githubusercontent.com/cikpa6701l-cmyk/shorts-render/main/status/';
+const RAW = '/api/status/';
 const KEY = 'shorts-studio-jobs-v1';
 let jobs = [];
 try { jobs = JSON.parse(localStorage.getItem(KEY) || '[]').filter(x => typeof x.id === 'string' && /^[a-z0-9]{6,32}$/.test(x.id)); } catch {}
@@ -71,7 +71,7 @@ function render() {
 }
 async function check(id) {
   try {
-    const r = await fetch(RAW + id + '.json?x=' + Date.now(), {cache:'no-store'});
+    const r = await fetch(RAW + id + '?x=' + Date.now(), {cache:'no-store'});
     if (!r.ok) return;
     const d = await r.json();
     const j = jobs.find(x => x.id === id); if (!j || !['ready','failed','queued'].includes(d.status)) return;
