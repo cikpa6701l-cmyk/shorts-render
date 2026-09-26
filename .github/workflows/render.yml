@@ -44,3 +44,4 @@ jobs:
           JOB_SECRET: ${{ secrets.JOB_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           POLL_KEY: ${{ secrets.POLL_KEY }}
+          PIXAZO_KEY: ${{ secrets.PIXAZO_KEY }}
