@@ -134,12 +134,16 @@ async function planScenes(n) {
     // Script service down: fall back to a simple deterministic plan so generation still works.
     console.log('[fallback] script planner unavailable:', String(e.message || e).slice(0, 120));
     const beats = ['establishing wide shot', 'closer view, key subject in focus', 'detail shot, rich texture', 'final heroic frame'];
+    const devotional = /murugan|muruga|vel|devotional|peacock|tamil/i.test(String(job.prompt));
+    const fixedSay = devotional
+      ? ['முருகா, உமது அருள் எப்போதும் எம்முடன் இருக்கட்டும்.', 'வேல் எந்தும் வெற்றி தரும்.', 'அருள் ஒளி எங்கும் பரவட்டும்.', 'பக்தியுடன் முன்னேறுவோம்.']
+      : ['A moment worth remembering.', 'Every frame tells the story.', 'Watch closely, the scene unfolds.', 'And this is where it all comes together.'];
     const out = [];
     for (let i = 0; i < n; i++) out.push({
       visual: `${job.prompt}, ${beats[Math.min(i, beats.length - 1)]}, ${styleTxt}`,
       motion: ('slow cinematic camera push in, natural motion' + cam).trim(),
       text: i === 0 ? String(job.prompt).slice(0, 40) : '',
-      say: ''
+      say: fixedSay[i % fixedSay.length]
     });
     return out;
   }
@@ -218,7 +222,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
       fs.writeFileSync(out('vo' + i + '.mp3'), v);
       args.push('-i', out('vo' + i + '.mp3'));
       const vi = 1 + extra;
-      fc = (fc ? fc + ';' : '') + `[0:a]volume=0.3[amb];[${vi}:a]volume=1.2[vo];[amb][vo]amix=inputs=2:duration=first[aout]`;
+      fc = (fc ? fc + ';' : '') + `[0:a]volume=0.3[amb];[${vi}:a]volume=1.2[vo];[amb][vo]amix=inputs=2:duration=first:normalize=0[aout]`;
       aout = '[aout]';
     }
   }
@@ -275,7 +279,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
       // free-licensed ambient bg (Kevin MacLeod, CC-BY 4.0) looped low under voice + soft bell at start
       await run(['-i', out('joined.mp4'), '-stream_loop', '-1', '-i', BGM,
         '-f', 'lavfi', '-t', '2.2', '-i', 'sine=frequency=880:sample_rate=44100',
-        '-filter_complex', '[1:a]volume=0.16[bg];[2:a]afade=t=out:st=0:d=2.2,volume=0.30[bell];[0:a][bg][bell]amix=inputs=3:duration=first:dropout_transition=2[a]',
+        '-filter_complex', '[1:a]volume=0.16[bg];[2:a]afade=t=out:st=0:d=2.2,volume=0.30[bell];[0:a][bg][bell]amix=inputs=3:duration=first:dropout_transition=2:normalize=0[am];[am]alimiter=limit=0.891251[a]',
         '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', '-y', out('final.mp4')]);
     } else { fs.renameSync(out('joined.mp4'), out('final.mp4')); }
     const buf = fs.readFileSync(out('final.mp4'));
