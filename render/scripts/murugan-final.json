@@ -1,0 +1,30 @@
+{
+  "title": "30-Second Lord Murugan Cinematic Story - Tamil (Ashwin exact script)",
+  "scenes": [
+    { "dur": 5,
+      "visual": "early morning sunrise over Palani hill temple, golden sky, soft mist, a peacock walking slowly in the foreground, ultra-realistic cinematic",
+      "motion": "slow cinematic push in, gentle mist drift, peacock walking",
+      "say": "உன் வாழ்க்கையில் எவ்வளவு கஷ்டம் வந்தாலும்… நம்பிக்கையை மட்டும் விடாதே.",
+      "text": "உன் வாழ்க்கையில் எவ்வளவு கஷ்டம் வந்தாலும்… நம்பிக்கையை மட்டும் விடாதே." },
+    { "dur": 7,
+      "visual": "Lord Murugan appearing in golden divine light holding the Vel spear, glowing light particles floating around, ultra-realistic cinematic devotional scene",
+      "motion": "slow push in toward the deity, light particles floating",
+      "say": "உன் கண்ணீரையும், உன் போராட்டத்தையும் வேலவன் அறிந்திருக்கிறார்.",
+      "text": "உன் கண்ணீரையும், உன் போராட்டத்தையும் வேலவன் அறிந்திருக்கிறார்." },
+    { "dur": 8,
+      "visual": "a lone devotee walking through darkness then folding hands in prayer to Murugan, darkness parting into a golden light path ahead, volumetric light, ultra-realistic cinematic",
+      "motion": "camera tracking alongside the devotee, darkness parting into golden light",
+      "say": "இன்று நீ சந்திக்கும் சோதனை… நாளை உன் வெற்றிக்கான பாதையாக மாறும்.",
+      "text": "இன்று நீ சந்திக்கும் சோதனை… நாளை உன் வெற்றிக்கான பாதையாக மாறும்." },
+    { "dur": 6,
+      "visual": "close-up of the Vel spear glowing brightly, peacock feathers moving in the wind, hopeful face of a devotee lit by golden light, ultra-realistic cinematic",
+      "motion": "slow pan across the glowing Vel and feathers",
+      "say": "சரவணபவா என்று சொல்லி… தைரியமாக முன்னேறு.",
+      "text": "சரவணபவா என்று சொல்லி… தைரியமாக முன்னேறு." },
+    { "dur": 4,
+      "visual": "Lord Murugan blessing pose, bright radiant sunrise over Palani temple in the background, golden volumetric light, ultra-realistic cinematic devotional",
+      "motion": "slow pull back revealing the temple sunrise",
+      "say": "வேலவன் அருள் உன்னோடு இருக்கட்டும்… வெற்றி நிச்சயம்!",
+      "text": "வேலவன் அருள் உன்னோடு இருக்கட்டும்… வெற்றி நிச்சயம்!" }
+  ]
+}
