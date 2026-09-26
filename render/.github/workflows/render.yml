@@ -1,0 +1,46 @@
+name: render-video
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job JSON'
+        required: true
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd render && npm install --no-audit --no-fund
+      - name: regen - fetch existing segments
+        if: ${{ github.event.inputs.job != '' }}
+        run: |
+          node -e "
+          const j = JSON.parse(process.env.JOB);
+          if (!j.regen) process.exit(0);
+          (async () => {
+            const fs = require('fs');
+            fs.mkdirSync('/tmp/job-' + j.id + '/segs', { recursive: true });
+            for (let i = 0; i < j.scenes.length; i++) {
+              if (i === j.regen) continue;
+              const r = await fetch(process.env.CB_URL + '/api/seg?id=' + j.id + '&i=' + i + '&secret=' + process.env.JOB_SECRET);
+              if (!r.ok) throw new Error('seg fetch ' + i + ' HTTP ' + r.status);
+              fs.writeFileSync('/tmp/job-' + j.id + '/segs/' + i + '.mp4', Buffer.from(await r.arrayBuffer()));
+            }
+          })().catch(e => { console.error(e); process.exit(1); });
+          "
+        env:
+          JOB: ${{ github.event.inputs.job }}
+          CB_URL: ${{ vars.CB_URL }}
+          JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      - name: run pipeline
+        run: node render/pipeline.mjs
+        env:
+          JOB: ${{ github.event.inputs.job }}
+          CB_URL: ${{ vars.CB_URL }}
+          JOB_SECRET: ${{ secrets.JOB_SECRET }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          POLL_KEY: ${{ secrets.POLL_KEY }}
