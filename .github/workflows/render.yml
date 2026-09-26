@@ -5,6 +5,8 @@ on:
       job:
         description: 'Job JSON'
         required: true
+permissions:
+  contents: write
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -45,3 +47,4 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           POLL_KEY: ${{ secrets.POLL_KEY }}
           PIXAZO_KEY: ${{ secrets.PIXAZO_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
