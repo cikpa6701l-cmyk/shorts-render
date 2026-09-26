@@ -35,7 +35,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const j = JSON.parse(body || '{}');
-        if (OWNER && j.owner !== OWNER) { res.writeHead(403); return res.end('{"error":"wrong passcode"}'); }
+        if (OWNER && String(j.owner||'').trim() !== OWNER.trim()) { res.writeHead(403); return res.end('{"error":"wrong passcode"}'); }
         const prompt = String(j.prompt || '').trim().slice(0, 300);
         if (!prompt) { res.writeHead(400); return res.end('{"error":"prompt required"}'); }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

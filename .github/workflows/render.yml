@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-core
       - run: cd render && npm install --no-audit --no-fund
       - name: regen - fetch existing segments
         if: ${{ github.event.inputs.job != '' }}
