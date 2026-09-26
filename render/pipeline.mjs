@@ -268,19 +268,40 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     await run(['-f', 'concat', '-safe', '0', '-i', out('list.txt'), '-c', 'copy', '-movflags', '+faststart', '-y', out('final.mp4')]);
     const buf = fs.readFileSync(out('final.mp4'));
     await status('Uploading', '');
-    // send video + seg inventory to the worker
-    const segsMeta = [];
-    for (let i = 0; i < scenes.length; i++) {
-      segsMeta.push({ i, seg: fs.readFileSync(out('segs', i + '.mp4')).toString('base64'), img: fs.readFileSync(out('img' + i + '.jpg')).toString('base64') });
+    // Deliver via GitHub release asset (persistent public URL) + status JSON commit (UI polls raw file)
+    const GT = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPOSITORY;
+    const ghH = { 'Authorization': 'Bearer ' + GT, 'Accept': 'application/vnd.github+json', 'content-type': 'application/json' };
+    let rel = await (await fetch(`https://api.github.com/repos/${repo}/releases/tags/videos`, { headers: ghH })).json();
+    if (!rel.id) {
+      rel = await (await fetch(`https://api.github.com/repos/${repo}/releases`, { method: 'POST', headers: ghH, body: JSON.stringify({ tag_name: 'videos', name: 'Generated videos' }) })).json();
     }
-    const payload = { id, video: buf.toString('base64'), scenes, seconds, ratio, prompt: job.prompt, engine: engineUsed, profile: job.profile || 'main', segs: segsMeta };
-    const r = await fetch(CB + '/api/job-complete', { method: 'POST', headers: { 'content-type': 'application/json', 'x-job-secret': SECRET }, body: JSON.stringify(payload) });
-    if (!r.ok) throw new Error('upload to app failed HTTP ' + r.status);
+    const up = await fetch(rel.upload_url.replace('{?name,label}', '') + '?name=job-' + id + '.mp4', { method: 'POST', headers: { 'Authorization': 'Bearer ' + GT, 'content-type': 'video/mp4' }, body: buf });
+    const asset = await up.json();
+    if (!asset.browser_download_url) throw new Error('release asset upload failed: ' + JSON.stringify(asset).slice(0, 200));
+    const videoUrl = asset.browser_download_url;
+    const st = { id, status: 'ready', video: videoUrl, engine: engineUsed, scenes: scenes.length, seconds, ratio, prompt: String(job.prompt).slice(0, 200), ts: Date.now() };
+    const sc = Buffer.from(JSON.stringify(st)).toString('base64');
+    const cur = await (await fetch(`https://api.github.com/repos/${repo}/contents/status/${id}.json`, { headers: ghH })).json();
+    const putBody = { message: 'status ' + id, content: sc };
+    if (cur && cur.sha) putBody.sha = cur.sha;
+    const pr = await fetch(`https://api.github.com/repos/${repo}/contents/status/${id}.json`, { method: 'PUT', headers: ghH, body: JSON.stringify(putBody) });
+    if (!pr.ok) throw new Error('status commit HTTP ' + pr.status);
     await status('Done', '', { status: 'ready', size: buf.length });
     console.log('JOB DONE', id, buf.length);
   } catch (e) {
     console.error('JOB FAIL', e);
     await status('failed', String(e.message || e).slice(0, 300), { status: 'failed', error: String(e.message || e).slice(0, 300) });
+    try {
+      const GT = process.env.GITHUB_TOKEN; const repo = process.env.GITHUB_REPOSITORY;
+      const ghH = { 'Authorization': 'Bearer ' + GT, 'Accept': 'application/vnd.github+json', 'content-type': 'application/json' };
+      const st = { id, status: 'failed', error: String(e.message || e).slice(0, 300), ts: Date.now() };
+      const sc = Buffer.from(JSON.stringify(st)).toString('base64');
+      const cur = await (await fetch(`https://api.github.com/repos/${repo}/contents/status/${id}.json`, { headers: ghH })).json();
+      const putBody = { message: 'status ' + id, content: sc };
+      if (cur && cur.sha) putBody.sha = cur.sha;
+      await fetch(`https://api.github.com/repos/${repo}/contents/status/${id}.json`, { method: 'PUT', headers: ghH, body: JSON.stringify(putBody) });
+    } catch {}
     process.exit(1);
   }
 })();
