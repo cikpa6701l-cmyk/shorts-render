@@ -159,11 +159,17 @@ async function sceneImage(visual, seed) {
 }
 
 function subPng(text, width) {
-  const esc = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const fsize = Math.round(width / 13);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${Math.round(fsize * 2.4)}">
-<text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="Noto Sans Tamil" font-weight="bold" font-size="${fsize}" fill="white" stroke="black" stroke-width="${Math.max(2, Math.round(fsize / 11))}" style="paint-order:stroke">${esc}</text></svg>`;
-  return new Resvg(svg, { font: { fontFiles: [FONT], loadSystemFonts: false, defaultFontFamily: 'Noto Sans Tamil' }, background: 'rgba(0,0,0,0)' }).render().asPng();
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = []; let cur = "";
+  for (const w of words) { if ((cur + " " + w).trim().length > 24 && cur) { lines.push(cur); cur = w; } else cur = (cur ? cur + " " : "") + w; }
+  if (cur) lines.push(cur);
+  const fsize = Math.round(width / 16);
+  const lh = Math.round(fsize * 1.5);
+  const H = lh * lines.length + Math.round(fsize * 0.6);
+  const spans = lines.map((l, i) => '<text x="50%" y="' + Math.round(fsize * 1.2 + i * lh) + '" font-family="Noto Sans Tamil" font-weight="bold" font-size="' + fsize + '" fill="#FFF3B0" stroke="black" stroke-width="' + Math.max(2, Math.round(fsize / 11)) + '" style="paint-order:stroke">' + esc(l) + "</text>").join("");
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + H + '">' + spans + "</svg>";
+  return new Resvg(svg, { font: { fontFiles: [FONT], loadSystemFonts: false, defaultFontFamily: "Noto Sans Tamil" }, background: "rgba(0,0,0,0)" }).render().asPng();
 }
 
 async function tts(text) {
@@ -207,7 +213,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
       '-c:a', 'aac', '-shortest', '-y', out('clipn' + i + '.mp4')]);
     fs.renameSync(out('clipn' + i + '.mp4'), out('clip' + i + '.mp4'));
   }
-  const args = ['-i', out('clip' + i + '.mp4')];
+  const args = ['-stream_loop', '-1', '-i', out('clip' + i + '.mp4')];
   let vmap = '0:v', extra = 0, fc = '';
   if (job.subtitles !== false && scene.text) {
     fs.writeFileSync(out('sub' + i + '.png'), subPng(scene.text, Math.round(ww * 0.87)));
@@ -243,6 +249,10 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
       scenes = job.scenes;
     } else if (job.image_b64) {
       scenes = [{ visual: job.prompt, motion: [job.prompt, CAMERA[job.camera], 'cinematic realistic motion'].filter(Boolean).join(', '), text: '', say: '' }];
+    } else if (String(job.prompt).startsWith('SCRIPT:')) {
+      const nm = String(job.prompt).slice(7).replace(/[^a-z0-9-]/gi, '');
+      const spec = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'render', 'scripts', nm + '.json'), 'utf8'));
+      scenes = spec.scenes.map(s => ({ visual: String(s.visual), motion: String(s.motion || 'slow cinematic camera push in, natural motion'), text: String(s.text || ''), say: String(s.say || ''), dur: Number(s.dur) || 0 }));
     } else {
       await status('Writing script and scene plan', '');
       scenes = await planScenes(Math.max(2, Math.min(6, Math.round(seconds / 5))));
@@ -268,7 +278,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
         img = await sceneImage(scenes[i].visual, 3000 + i);
       }
       fs.writeFileSync(out('img' + i + '.jpg'), img);
-      await buildSeg(i, img, scenes[i], per, hh, ww);
+      await buildSeg(i, img, scenes[i], (scenes[i].dur || per), hh, ww);
     }
     await status('Joining scenes', '');
     // regen: other segs are downloaded from KV by the workflow before this step
@@ -278,8 +288,8 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     if (fs.existsSync(BGM)) {
       // free-licensed ambient bg (Kevin MacLeod, CC-BY 4.0) looped low under voice + soft bell at start
       await run(['-i', out('joined.mp4'), '-stream_loop', '-1', '-i', BGM,
-        '-f', 'lavfi', '-t', '2.2', '-i', 'sine=frequency=880:sample_rate=44100',
-        '-filter_complex', '[1:a]volume=0.16[bg];[2:a]afade=t=out:st=0:d=2.2,volume=0.30[bell];[0:a][bg][bell]amix=inputs=3:duration=first:dropout_transition=2:normalize=0[am];[am]alimiter=limit=0.891251[a]',
+        '-f', 'lavfi', '-t', '2.2', '-i', 'sine=frequency=880:sample_rate=44100', '-f', 'lavfi', '-t', '3.5', '-i', 'sine=frequency=1046:sample_rate=44100',
+        '-filter_complex', '[1:a]volume=0.16[bg];[2:a]afade=t=out:st=0:d=2.2,volume=0.30[bell];[3:a]adelay=26000|26000,afade=t=out:st=1.2:d=2.3,volume=0.38[bell2];[0:a][bg][bell][bell2]amix=inputs=4:duration=first:dropout_transition=2:normalize=0[am];[am]alimiter=limit=0.891251[a]',
         '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', '-y', out('final.mp4')]);
     } else { fs.renameSync(out('joined.mp4'), out('final.mp4')); }
     const buf = fs.readFileSync(out('final.mp4'));
