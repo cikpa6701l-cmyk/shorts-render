@@ -91,6 +91,7 @@ function ytButton(container, url, title) {
       const r = await fetch('/api/youtube-upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ video: url, title: title.slice(0, 90) }) });
       const d = await r.json();
       if (r.status === 401 && d.needsAuth) { location.href = '/auth/google'; return; }
+      if (r.status === 409) { b.textContent = 'Upload already in progress - wait a moment'; return; }
       if (!r.ok) { b.textContent = 'Upload failed: ' + (d.error || r.status); b.disabled = false; return; }
       b.textContent = 'On YouTube (private) - tap to open';
       b.onclick = () => window.open(d.url, '_blank');
@@ -139,6 +140,10 @@ setInterval(checkAll, 8000);
 go.onclick = async () => {
   const prompt = document.getElementById('prompt').value.trim();
   if (!prompt) { st.textContent = 'Type a prompt first'; return; }
+  const sig = [prompt, seconds.value, ratio.value, quality.value, voice.checked, subtitles.checked].join('|');
+  if (jobs.some(x => x.sig === sig && x.status !== 'ready' && x.status !== 'failed')) {
+    st.textContent = 'Already rendering that exact video - wait for it to finish.'; return;
+  }
   go.disabled = true; out.replaceChildren(); st.textContent = 'Starting...';
   try {
     const r = await fetch('/api/generate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
@@ -146,7 +151,9 @@ go.onclick = async () => {
       voice: voice.checked, subtitles: subtitles.checked, owner: owner.value }) });
     const d = await r.json();
     if (!r.ok) { st.textContent = 'Error: ' + (d.error || r.status); go.disabled = false; return; }
-    jobs.unshift({id:d.id,prompt,status:'queued',ts:Date.now()}); saveJobs(); render();
+    if (d.deduped) st.textContent = 'Already rendering that exact video - tracking the existing job.';
+    jobs = jobs.filter(x => x.id !== d.id);
+    jobs.unshift({id:d.id,prompt,status:'queued',sig,ts:Date.now()}); saveJobs(); render();
     st.textContent = 'Queued. Rendering in the background - you can close this page and return later.';
     go.disabled = false; check(d.id);
   } catch (e) { st.textContent = 'Network error. If submitted, check My videos before retrying.'; go.disabled = false; }
