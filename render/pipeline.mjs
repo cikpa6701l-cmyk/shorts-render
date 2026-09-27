@@ -215,6 +215,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
   } catch (e) {
     ltxUnavailable = true;
     console.log('[fallback] LTX-2 HF failed, switching to Pixazo ltx-video:', String(e.message || e).slice(0, 160));
+    globalThis._hfError = String(e.message || e).slice(0, 140);
     await status('Generating real motion (backup engine)', `scene ${i + 1} - main engine down, using backup`);
     clip = await pixazoVideo(scene.visual + ', ' + scene.motion);
     usedFallback = true; globalThis._engineUsed = 'pixazo-ltx-fallback';
@@ -334,7 +335,8 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     console.log('JOB DONE', id, buf.length);
   } catch (e) {
     console.error('JOB FAIL', e);
-    await status('failed', String(e.message || e).slice(0, 300), { status: 'failed', error: String(e.message || e).slice(0, 300) });
+    const _em = String(e.message || e) + (globalThis._hfError ? ' | HF: ' + globalThis._hfError : '');
+    await status('failed', _em.slice(0, 300), { status: 'failed', error: _em.slice(0, 300) });
     try {
       const GT = process.env.GITHUB_TOKEN; const repo = process.env.GITHUB_REPOSITORY;
       const ghH = { 'Authorization': 'Bearer ' + GT, 'Accept': 'application/vnd.github+json', 'content-type': 'application/json' };
