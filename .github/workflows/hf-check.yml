@@ -6,7 +6,9 @@ jobs:
     timeout-minutes: 3
     steps:
       - run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HF" https://huggingface.co/api/whoami)
+          code=$(curl -s -o /tmp/who.json -w '%{http_code}' -H "Authorization: Bearer $HF" https://huggingface.co/api/whoami-v2)
           echo "whoami HTTP $code"
+          head -c 200 /tmp/who.json; echo
+          [ "$code" = "200" ]
         env:
           HF: ${{ secrets.HF_TOKEN }}
