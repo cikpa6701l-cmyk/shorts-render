@@ -1,0 +1,34 @@
+name: test-asset
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'asset file name, e.g. job-livetest1.mp4'
+        required: true
+      kind:
+        description: 'valid or corrupt'
+        required: true
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          set -e
+          if [ "$KIND" = "valid" ]; then
+            ffmpeg -y -v error -f lavfi -i testsrc=size=512x912:duration=3:rate=24 -f lavfi -i sine=frequency=440:duration=3 -c:v libx264 -b:v 400k -pix_fmt yuv420p -c:a aac -shortest "$NAME"
+          else
+            printf 'this is not an mp4 file - corrupt test payload' > "$NAME"
+          fi
+          ls -la "$NAME"
+        env:
+          NAME: ${{ inputs.name }}
+          KIND: ${{ inputs.kind }}
+      - name: upload asset
+        run: |
+          REL=$(curl -s -H "Authorization: Bearer $GT" https://api.github.com/repos/$REPO/releases/tags/videos | jq -r .id)
+          curl -s -X POST -H "Authorization: Bearer $GT" -H "Content-Type: video/mp4" --data-binary @"$NAME" "https://uploads.github.com/repos/$REPO/releases/$REL/assets?name=$NAME" | jq -r '.browser_download_url // .'
+        env:
+          GT: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NAME: ${{ inputs.name }}
