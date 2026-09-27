@@ -40,6 +40,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.includes('actions/workflows/render.yml/dispatches')) { dispatchCount++; return new Response(null, { status: 204 }); }
   if (u.includes('releases/download/videos/job-')) {
+    await new Promise(r => setTimeout(r, 120)); // force interleaving window for race tests
     if (hangDownload) return new Promise((_, rej) => { opts.signal.addEventListener('abort', () => rej(new Error('The operation was aborted'))); });
     return new Response(videoBytes, { status: 200 });
   }
@@ -193,6 +194,20 @@ test('upload fails twice then succeeds; no phantom videos', async () => {
   const ok = await post('/api/youtube-upload', { video: url3 }, { cookie: sessCookie() });
   assert.equal(ok.status, 200);
   assert.equal(ytPutCount, before + 1); // exactly one real upload after retries
+});
+
+// --- simultaneous double-click upload (in-flight guard) ---
+test('simultaneous uploads of same video -> one 200, one 409, one YouTube PUT', async () => {
+  const url4 = VIDEO_URL.replace('abc123', 'race1');
+  videoBytes = MP4;
+  const before = ytPutCount;
+  const [r1, r2] = await Promise.all([
+    post('/api/youtube-upload', { video: url4 }, { cookie: sessCookie() }),
+    post('/api/youtube-upload', { video: url4 }, { cookie: sessCookie() }),
+  ]);
+  const codes = [r1.status, r2.status].sort();
+  assert.deepEqual(codes, [200, 409]);
+  assert.equal(ytPutCount, before + 1);
 });
 
 // --- DB/API failure ---
