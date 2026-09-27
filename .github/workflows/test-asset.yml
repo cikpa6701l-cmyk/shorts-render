@@ -16,6 +16,7 @@ jobs:
       - run: |
           set -e
           if [ "$KIND" = "valid" ]; then
+            command -v ffmpeg || sudo apt-get install -y -qq ffmpeg
             ffmpeg -y -v error -f lavfi -i testsrc=size=512x912:duration=3:rate=24 -f lavfi -i sine=frequency=440:duration=3 -c:v libx264 -b:v 400k -pix_fmt yuv420p -c:a aac -shortest "$NAME"
           else
             printf 'this is not an mp4 file - corrupt test payload' > "$NAME"
@@ -26,8 +27,11 @@ jobs:
           KIND: ${{ inputs.kind }}
       - name: upload asset
         run: |
-          REL=$(curl -s -H "Authorization: Bearer $GT" https://api.github.com/repos/$REPO/releases/tags/videos | jq -r .id)
-          curl -s -X POST -H "Authorization: Bearer $GT" -H "Content-Type: video/mp4" --data-binary @"$NAME" "https://uploads.github.com/repos/$REPO/releases/$REL/assets?name=$NAME" | jq -r '.browser_download_url // .'
+          set -e
+          REL=$(curl -sf -H "Authorization: Bearer $GT" https://api.github.com/repos/$REPO/releases/tags/videos | jq -r .id)
+          test -n "$REL" && [ "$REL" != "null" ]
+          UP=$(curl -sf -X POST -H "Authorization: Bearer $GT" -H "Content-Type: video/mp4" --data-binary @"$NAME" "https://uploads.github.com/repos/$REPO/releases/$REL/assets?name=$NAME")
+          echo "$UP" | jq -r '.browser_download_url'
         env:
           GT: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
