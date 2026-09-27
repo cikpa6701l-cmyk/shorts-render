@@ -1,0 +1,12 @@
+name: hf-check
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HF" https://huggingface.co/api/whoami)
+          echo "whoami HTTP $code"
+        env:
+          HF: ${{ secrets.HF_TOKEN }}
