@@ -172,6 +172,22 @@ function subPng(text, width) {
   return new Resvg(svg, { font: { fontFiles: [FONT], loadSystemFonts: false, defaultFontFamily: "Noto Sans Tamil" }, background: "rgba(0,0,0,0)" }).render().asPng();
 }
 
+
+function subAss(text, ww, hh) {
+  const fsize = Math.max(26, Math.round(ww / 15));
+  const marginV = Math.round(hh / 9);
+  const marginLR = Math.round(ww * 0.08);
+  const outline = Math.max(2, Math.round(fsize / 11));
+  const safe = String(text).replace(/[{}]/g, '').replace(/\r?\n/g, '\\N');
+  return '[Script Info]\nScriptType: v4.00+\nPlayResX: ' + ww + '\nPlayResY: ' + hh + '\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n' +
+    '[V4+ Styles]\n' +
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n' +
+    'Style: Sub,Noto Sans Tamil,' + fsize + ',&H00B0F3FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,' + outline + ',0,2,' + marginLR + ',' + marginLR + ',' + marginV + ',1\n\n' +
+    '[Events]\n' +
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n' +
+    'Dialogue: 0,0:00:00.00,9:59:59.00,Sub,,0,0,0,,' + safe + '\n';
+}
+
 async function tts(text) {
   // edge-tts: free Microsoft Edge Tamil neural voice (no key needed)
   try {
@@ -216,9 +232,10 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
   const args = ['-stream_loop', '-1', '-i', out('clip' + i + '.mp4')];
   let vmap = '0:v', extra = 0, fc = '';
   if (job.subtitles !== false && scene.text) {
-    fs.writeFileSync(out('sub' + i + '.png'), subPng(scene.text, Math.round(ww * 0.87)));
-    args.push('-i', out('sub' + i + '.png')); extra = 1;
-    fc = `[0:v][1:v]overlay=(W-w)/2:H-h-${Math.round(hh / 9)}[v]`;
+    const ap = out('sub' + i + '.ass');
+    fs.writeFileSync(ap, subAss(scene.text, ww, hh));
+    // libass (HarfBuzz) shapes Tamil correctly; margins keep glyphs off the edges
+    fc = `[0:v]subtitles='${ap}':fontsdir='${path.dirname(FONT)}'[v]`;
     vmap = '[v]';
   }
   let aout = '0:a?';
