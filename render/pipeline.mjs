@@ -54,8 +54,8 @@ async function hfUpload(buf, name) {
 }
 let ltxUnavailable = false;
 async function hfVideoOnce(serverPath, motionPrompt, seconds, height, width, enhance) {
-  // A down ZeroGPU queue should not hold each scene for minutes. One bounded attempt per job.
-  const deadline = AbortSignal.timeout(30000);
+  // ZeroGPU needs time to queue+generate; one bounded attempt per scene, generous window.
+  const deadline = AbortSignal.timeout(150000);
   const data = [{ path: serverPath, meta: { _type: 'gradio.FileData' } }, motionPrompt, seconds, enhance !== false, Math.floor(Math.random() * 1e9), true, height, width];
   const headers = { 'content-type': 'application/json' };
   if (HF_TOKEN) headers['Authorization'] = 'Bearer ' + HF_TOKEN;
