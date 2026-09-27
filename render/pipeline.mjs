@@ -66,7 +66,11 @@ async function hfVideoOnce(serverPath, motionPrompt, seconds, height, width, enh
   const rr = await fetch(`${HF_SPACE}/gradio_api/call/generate_video/${event_id}`, { headers, signal: deadline });
   if (!rr.ok) throw new Error('hf status HTTP ' + rr.status);
   const txt = await rr.text();
-  if (txt.includes('event: error')) throw new Error('hf generation error');
+  if (txt.includes('event: error')) {
+    let det = '';
+    try { const dl = txt.split('\n').filter(l => l.startsWith('data: ')).pop() || ''; det = dl.slice(6, 256); } catch (_) {}
+    throw new Error('hf generation error' + (det ? ': ' + det : ''));
+  }
   if (!txt.includes('event: complete')) throw new Error('hf did not complete in fast health window');
   const dataLine = txt.split('\n').filter(l => l.startsWith('data: ')).pop();
   const payload = JSON.parse(dataLine.slice(6));
