@@ -86,6 +86,7 @@ async function getAccessToken() {
 
 
 // ---------- idempotency stores (repo-backed) ----------
+const inflightUploads = new Set();
 const ACTIVE_PATH = 'status/active.json';
 const UPLOADS_PATH = 'status/uploads.json.enc';
 const ACTIVE_TTL = 30 * 60e3, UPLOADING_TTL = 10 * 60e3;
@@ -274,6 +275,8 @@ const server = http.createServer(async (req, res) => {
       const j = JSON.parse(body || '{}');
       videoUrl = String(j.video || '');
       if (!/^https:\/\/github\.com\/cikpa6701l-cmyk\/shorts-render\/releases\/download\/videos\/job-[a-z0-9]+\.mp4$/.test(videoUrl)) return json(res, 400, { error: 'bad video url' });
+      if (inflightUploads.has(videoUrl)) return json(res, 409, { error: 'upload already in progress', inProgress: true });
+      inflightUploads.add(videoUrl);
       const title = String(j.title || 'Shorts AI Studio video').slice(0, 95) || 'Shorts AI Studio video';
       const desc = String(j.description || '').slice(0, 800);
       const up0 = await loadUploads();
@@ -320,6 +323,9 @@ const server = http.createServer(async (req, res) => {
       if (e.code === 'needsAuth') return json(res, 401, { error: 'google session expired - sign in again', needsAuth: true });
       console.error(JSON.stringify({ ts: new Date().toISOString(), op: 'youtube-upload', state: 'failed', message: String(e.message || e).slice(0, 200) }));
       return json(res, 502, { error: String(e.message || e).slice(0, 250) });
+ 
+    } finally {
+      if (videoUrl) inflightUploads.delete(videoUrl);
     }
   }
 
