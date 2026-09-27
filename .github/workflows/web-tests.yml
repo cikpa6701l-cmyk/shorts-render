@@ -11,4 +11,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: cd web && node tests/safety.test.mjs
+      - run: cd web && node tests/safety.test.mjs 2>&1 | tee /tmp/tap.txt
+      - name: summary
+        if: always()
+        run: grep -E '^# (tests|pass|fail) ' /tmp/tap.txt | sed 's/^# //' >> "$GITHUB_STEP_SUMMARY" || true
