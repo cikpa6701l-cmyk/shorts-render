@@ -340,7 +340,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
     try {
       const GT = process.env.GITHUB_TOKEN; const repo = process.env.GITHUB_REPOSITORY;
       const ghH = { 'Authorization': 'Bearer ' + GT, 'Accept': 'application/vnd.github+json', 'content-type': 'application/json' };
-      const st = { id, status: 'failed', error: String(e.message || e).slice(0, 300), ts: Date.now() };
+      const st = { id, status: 'failed', error: _em.slice(0, 300), ts: Date.now() };
       const sc = Buffer.from(JSON.stringify(st)).toString('base64');
       const cur = await (await fetch(`https://api.github.com/repos/${repo}/contents/status/${id}.json`, { headers: ghH })).json();
       const putBody = { message: 'status ' + id, content: sc };
