@@ -21,11 +21,16 @@
   video { width: 100%; border-radius: 12px; background: #000; margin-top: 6px; }
   a.dl { display: block; text-align: center; margin-top: 10px; background: #16161e; border: 1px solid #7cf03c; color: #7cf03c; border-radius: 10px; padding: 12px; text-decoration: none; font-weight: 600; }
   .note { font-size: 12px; color: #667; margin-top: 14px; }
+  .authbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #16161e; border: 1px solid #2a2a35; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .authbar a { color: #7cf03c; text-decoration: none; font-weight: 600; }
+  .authbar .who { color: #aab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.yt { background: #c4302b; color: #fff; margin-top: 8px; padding: 10px; font-size: 14px; }
 </style>
 </head>
 <body>
 <main>
   <h1>Shorts <span>AI</span> Studio</h1>
+  <div class="authbar" id="authbar" style="display:none"></div>
   <textarea id="prompt" placeholder="Describe your short video... (e.g. a young man walks toward the camera, wind in his shirt, cinematic light)"></textarea>
   <div class="row">
     <select id="ratio"><option value="9:16">9:16 Shorts</option><option value="16:9">16:9 Wide</option><option value="1:1">1:1 Square</option></select>
@@ -36,7 +41,7 @@
     <label class="ck"><input type="checkbox" id="voice" checked> Tamil voice</label>
     <label class="ck"><input type="checkbox" id="subtitles" checked> Subtitles</label>
   </div>
-  <div class="row"><input type="password" id="owner" autocomplete="off" placeholder="Owner passcode" style="flex:1"></div>
+  <div class="row" id="passrow"><input type="password" id="owner" autocomplete="off" placeholder="Owner passcode" style="flex:1"></div>
   <button id="go">Generate video</button>
   <div id="status"></div>
   <div id="out"></div>
@@ -46,17 +51,59 @@
 </main>
 <script>
 const go = document.getElementById('go'), st = document.getElementById('status'), out = document.getElementById('out'), jobsEl = document.getElementById('jobs');
+const authbar = document.getElementById('authbar'), passrow = document.getElementById('passrow');
 const RAW = '/api/status/';
 const KEY = 'shorts-studio-jobs-v1';
-let jobs = [];
+let jobs = [], SESS = { loggedIn: false, youtube: false };
 try { jobs = JSON.parse(localStorage.getItem(KEY) || '[]').filter(x => typeof x.id === 'string' && /^[a-z0-9]{6,32}$/.test(x.id)); } catch {}
 function saveJobs() { localStorage.setItem(KEY, JSON.stringify(jobs.slice(0, 30))); }
 function node(tag, text) { const el = document.createElement(tag); el.textContent = text; return el; }
-function showVideo(container, url) {
+
+async function loadSession() {
+  try {
+    const r = await fetch('/api/session', { cache: 'no-store' });
+    SESS = await r.json();
+  } catch { SESS = { loggedIn: false, youtube: false }; }
+  authbar.style.display = 'flex'; authbar.replaceChildren();
+  if (SESS.loggedIn) {
+    passrow.style.display = 'none';
+    const who = node('span', 'Signed in as ' + (SESS.email || 'owner') + (SESS.youtube ? ' - YouTube connected' : ''));
+    who.className = 'who';
+    const so = node('a', 'Sign out'); so.href = '/auth/logout';
+    authbar.append(who, so);
+  } else {
+    passrow.style.display = 'flex';
+    const who = node('span', 'Owner: use passcode, or');
+    who.className = 'who';
+    const si = node('a', 'Sign in with Google'); si.href = '/auth/google';
+    authbar.append(who, si);
+  }
+  const ae = new URLSearchParams(location.search).get('auth_error');
+  if (ae) st.textContent = 'Google sign-in failed: ' + ae;
+}
+
+function ytButton(container, url, title) {
+  if (!SESS.youtube) return;
+  const b = node('button', 'Upload to YouTube (private)'); b.className = 'yt'; b.type = 'button';
+  b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Uploading to YouTube...';
+    try {
+      const r = await fetch('/api/youtube-upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ video: url, title: title.slice(0, 90) }) });
+      const d = await r.json();
+      if (r.status === 401 && d.needsAuth) { location.href = '/auth/google'; return; }
+      if (!r.ok) { b.textContent = 'Upload failed: ' + (d.error || r.status); b.disabled = false; return; }
+      b.textContent = 'On YouTube (private) - tap to open';
+      b.onclick = () => window.open(d.url, '_blank');
+    } catch (e) { b.textContent = 'Network error'; b.disabled = false; }
+  };
+  container.append(b);
+}
+function showVideo(container, url, title) {
   if (!/^https:\/\/github\.com\/cikpa6701l-cmyk\/shorts-render\/releases\/download\/videos\/job-[a-z0-9]+\.mp4$/.test(url)) return;
   const video = document.createElement('video'); video.controls = true; video.playsInline = true; video.src = url;
   const link = document.createElement('a'); link.className = 'dl'; link.href = url; link.download = ''; link.textContent = 'Download MP4';
   container.append(video, link);
+  ytButton(container, url, title || 'Shorts AI Studio video');
 }
 function render() {
   jobsEl.replaceChildren();
@@ -65,7 +112,7 @@ function render() {
     const label = node('div',j.prompt || 'Video'); label.style.cssText = 'font-size:14px;overflow-wrap:anywhere;margin-bottom:8px';
     const state = node('div',j.status === 'ready' ? 'Ready' : j.status === 'failed' ? 'Failed: '+(j.error || 'Please try again') : 'Rendering...');
     state.style.cssText = 'font-size:13px;color:#aab'; card.append(label,state);
-    if (j.status === 'ready' && j.video) showVideo(card,j.video);
+    if (j.status === 'ready' && j.video) showVideo(card, j.video, j.prompt);
     jobsEl.append(card);
   }
 }
@@ -80,14 +127,15 @@ async function check(id) {
       go.disabled = false;
       if (id === jobs[0].id) {
         st.textContent = d.status === 'ready' ? 'Done! Engine: '+(d.engine || '') : 'Failed: '+j.error;
-        out.replaceChildren(); if (d.status === 'ready') showVideo(out,j.video);
+        out.replaceChildren(); if (d.status === 'ready') showVideo(out, j.video, j.prompt);
       }
     }
     saveJobs(); render();
   } catch (e) {}
 }
 async function checkAll() { for (const j of jobs) if (j.status !== 'ready' && j.status !== 'failed') await check(j.id); }
-render(); checkAll(); setInterval(checkAll,8000);
+loadSession().then(() => { render(); checkAll(); });
+setInterval(checkAll, 8000);
 go.onclick = async () => {
   const prompt = document.getElementById('prompt').value.trim();
   if (!prompt) { st.textContent = 'Type a prompt first'; return; }
