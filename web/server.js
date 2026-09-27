@@ -20,7 +20,8 @@ const TOKEN_PATH = 'secrets/tokens.json.enc';
 const SESSION_DAYS = 30;
 
 const ghH = { 'Authorization': 'Bearer ' + GH_PAT, 'Accept': 'application/vnd.github+json', 'content-type': 'application/json', 'User-Agent': 'shorts-studio' };
-async function gh(url, opts) { return fetch(url, Object.assign({ headers: ghH }, opts || {})); }
+const T = { gh: +(process.env.T_GH_MS || 30000), dl: +(process.env.T_DL_MS || 120000), ytInit: +(process.env.T_YTINIT_MS || 30000), ytPut: +(process.env.T_YTPUT_MS || 300000) };
+async function gh(url, opts) { return fetch(url, Object.assign({ headers: ghH, signal: AbortSignal.timeout(T.gh) }, opts || {})); }
 
 async function putStatus(id, st) {
   const p = `https://api.github.com/repos/${REPO}/contents/status/${id}.json`;
@@ -81,6 +82,59 @@ async function getAccessToken() {
   }
   atCache = { token: d.access_token, exp: Date.now() + (d.expires_in || 3500) * 1000 };
   return atCache.token;
+}
+
+
+// ---------- idempotency stores (repo-backed) ----------
+const ACTIVE_PATH = 'status/active.json';
+const UPLOADS_PATH = 'status/uploads.json.enc';
+const ACTIVE_TTL = 30 * 60e3, UPLOADING_TTL = 10 * 60e3;
+const jobSig = (j) => crypto.createHash('sha1').update([j.prompt, j.seconds, j.ratio, j.quality, j.voice, j.subtitles].join('|')).digest('hex').slice(0, 16);
+async function readJsonFile(p) {
+  const r = await gh(`https://api.github.com/repos/${REPO}/contents/${p}`);
+  if (!r.ok) return { data: null, sha: null };
+  const d = await r.json();
+  return { data: JSON.parse(Buffer.from(d.content, 'base64').toString()), sha: d.sha };
+}
+async function writeJsonFile(p, obj, sha, msg) {
+  const body = { message: msg, content: Buffer.from(JSON.stringify(obj)).toString('base64') };
+  if (sha) body.sha = sha;
+  const r = await gh(`https://api.github.com/repos/${REPO}/contents/${p}`, { method: 'PUT', body: JSON.stringify(body) });
+  return r.ok;
+}
+// Claim a job signature before dispatching; on write conflict re-read and return the winner's claim.
+async function claimActive(sig, id) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, sha } = await readJsonFile(ACTIVE_PATH);
+    const active = (data && data.jobs) || {};
+    const now = Date.now();
+    for (const k of Object.keys(active)) if (now - active[k].ts > ACTIVE_TTL) delete active[k];
+    const hit = active[sig];
+    if (hit) return { claimed: false, id: hit.id };
+    active[sig] = { id, ts: now };
+    if (await writeJsonFile(ACTIVE_PATH, { jobs: active }, sha, 'active ' + id)) return { claimed: true, id };
+  }
+  throw new Error('active index conflict');
+}
+async function releaseActive(sig) {
+  try {
+    const { data, sha } = await readJsonFile(ACTIVE_PATH);
+    const active = (data && data.jobs) || {};
+    if (active[sig]) { delete active[sig]; await writeJsonFile(ACTIVE_PATH, { jobs: active }, sha, 'release ' + sig); }
+  } catch {}
+}
+async function loadUploads() {
+  try {
+    const r = await gh(`https://api.github.com/repos/${REPO}/contents/${UPLOADS_PATH}`);
+    if (!r.ok) return { map: {}, sha: null };
+    const d = await r.json();
+    return { map: dec(Buffer.from(d.content, 'base64').toString()), sha: d.sha };
+  } catch { return { map: {}, sha: null }; }
+}
+async function saveUploads(map, sha) {
+  const body = { message: 'uploads map', content: Buffer.from(enc(map)).toString('base64') };
+  if (sha) body.sha = sha;
+  await gh(`https://api.github.com/repos/${REPO}/contents/${UPLOADS_PATH}`, { method: 'PUT', body: JSON.stringify(body) });
 }
 
 // ---------- signed session cookie ----------
@@ -173,8 +227,16 @@ const server = http.createServer(async (req, res) => {
       const r = await gh(`https://api.github.com/repos/${REPO}/contents/status/${id}.json`);
       if (!r.ok) return json(res, 404, { error: 'not found' });
       const d = await r.json();
+      let st = Buffer.from(d.content, 'base64').toString();
+      try {
+        const o = JSON.parse(st);
+        const age = Date.now() - (o.ts || o.updatedAt || 0);
+        if (!['ready', 'failed'].includes(o.status) && age > 30 * 60e3) {
+          st = JSON.stringify(Object.assign(o, { status: 'failed', error: 'render timed out - no update for 30+ min; safe to retry', stuck: true }));
+        }
+      } catch {}
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      return res.end(Buffer.from(d.content, 'base64').toString());
+      return res.end(st);
     } catch (e) { return json(res, 500, { error: 'status' }); }
   }
 
@@ -189,39 +251,74 @@ const server = http.createServer(async (req, res) => {
       if (!prompt) return json(res, 400, { error: 'prompt required' });
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       const job = { id, prompt, seconds: Math.max(5, Math.min(30, +j.seconds || 10)), ratio: ['9:16','16:9','1:1'].includes(j.ratio) ? j.ratio : '9:16', quality: ['fast','high','ultra'].includes(j.quality) ? j.quality : 'fast', voice: !!j.voice, subtitles: j.subtitles !== false, camera: 'auto', style: 'cinematic' };
+      const sig = jobSig(job);
+      const claim = await claimActive(sig, id);
+      if (!claim.claimed) {
+        const sr = await gh(`https://api.github.com/repos/${REPO}/contents/status/${claim.id}.json`);
+        if (sr.ok) return json(res, 200, { id: claim.id, deduped: true });  // identical job already rendering
+        await releaseActive(sig);  // stale claim (status never written) - fall through as new
+      }
       await putStatus(id, { id, status: 'queued', prompt: job.prompt, ts: Date.now() });
       const d = await gh(`https://api.github.com/repos/${REPO}/actions/workflows/render.yml/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main', inputs: { job: JSON.stringify(job) } }) });
-      if (!d.ok) { await putStatus(id, { id, status: 'failed', error: 'dispatch HTTP ' + d.status, ts: Date.now() }); return json(res, 502, { error: 'dispatch failed' }); }
+      if (!d.ok) { await putStatus(id, { id, status: 'failed', error: 'dispatch HTTP ' + d.status, ts: Date.now() }); await releaseActive(sig); return json(res, 502, { error: 'dispatch failed' }); }
       return json(res, 200, { id });
-    } catch (e) { return json(res, 500, { error: 'server' }); }
+    } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), op: 'generate', state: 'failed', message: String(e.message || e).slice(0, 200) })); return json(res, 500, { error: 'server' }); }
   }
 
   // ---------- YouTube upload (session required, explicit click only, uploads as PRIVATE) ----------
   if (req.method === 'POST' && u.pathname === '/api/youtube-upload') {
     if (!sess) return json(res, 401, { error: 'sign in first', needsAuth: true });
     const body = await readBody(req);
+    let videoUrl = '';
     try {
       const j = JSON.parse(body || '{}');
-      const videoUrl = String(j.video || '');
+      videoUrl = String(j.video || '');
       if (!/^https:\/\/github\.com\/cikpa6701l-cmyk\/shorts-render\/releases\/download\/videos\/job-[a-z0-9]+\.mp4$/.test(videoUrl)) return json(res, 400, { error: 'bad video url' });
       const title = String(j.title || 'Shorts AI Studio video').slice(0, 95) || 'Shorts AI Studio video';
       const desc = String(j.description || '').slice(0, 800);
-      const at = await getAccessToken();
-      const vr = await fetch(videoUrl);
-      if (!vr.ok) throw new Error('video download failed');
+      const up0 = await loadUploads();
+      const prev = up0.map[videoUrl];
+      if (prev && prev.state === 'done') return json(res, 200, { youtubeId: prev.youtubeId, url: prev.url, privacy: 'private', deduped: true });
+      if (prev && prev.state === 'uploading' && Date.now() - prev.ts < UPLOADING_TTL) return json(res, 409, { error: 'upload already in progress', inProgress: true });
+      up0.map[videoUrl] = { state: 'uploading', ts: Date.now() };
+      await saveUploads(up0.map, up0.sha);
+      const fail = async (code, msg) => {
+        const cur = await loadUploads();
+        cur.map[videoUrl] = { state: 'failed', ts: Date.now(), error: msg.slice(0, 200) };
+        await saveUploads(cur.map, cur.sha).catch(() => {});
+        return json(res, code, { error: msg.slice(0, 250) });
+      };
+      const at = await getAccessToken();  // auth validated before touching the video
+      const vr = await fetch(videoUrl, { signal: AbortSignal.timeout(T.dl) });
+      if (!vr.ok) return fail(502, 'video download failed');
       const vbuf = Buffer.from(await vr.arrayBuffer());
+      if (vbuf.length < 10240 || vbuf.toString('latin1', 4, 8) !== 'ftyp') return fail(400, 'invalid video file (not an MP4 over 10 KB)');
       const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
-        method: 'POST', headers: { 'Authorization': 'Bearer ' + at, 'content-type': 'application/json', 'x-upload-content-type': 'video/mp4', 'x-upload-content-length': String(vbuf.length) },
+        method: 'POST', signal: AbortSignal.timeout(T.ytInit), headers: { 'Authorization': 'Bearer ' + at, 'content-type': 'application/json', 'x-upload-content-type': 'video/mp4', 'x-upload-content-length': String(vbuf.length) },
         body: JSON.stringify({ snippet: { title, description: desc, categoryId: '22' }, status: { privacyStatus: 'private', selfDeclaredMadeForKids: false } }) });
-      if (!init.ok) throw new Error('youtube init HTTP ' + init.status + ' ' + (await init.text()).slice(0, 200));
+      if (!init.ok) return fail(502, 'youtube init HTTP ' + init.status + ' ' + (await init.text()).slice(0, 200));
       const loc = init.headers.get('location');
-      if (!loc) throw new Error('no upload location');
-      const up = await fetch(loc, { method: 'PUT', headers: { 'content-type': 'video/mp4', 'content-length': String(vbuf.length) }, body: vbuf });
+      if (!loc) return fail(502, 'no upload location');
+      const up = await fetch(loc, { method: 'PUT', signal: AbortSignal.timeout(T.ytPut), headers: { 'content-type': 'video/mp4', 'content-length': String(vbuf.length) }, body: vbuf });
       const ud = await up.json().catch(() => ({}));
-      if (!up.ok || !ud.id) throw new Error('youtube upload HTTP ' + up.status + ' ' + JSON.stringify(ud).slice(0, 200));
+      if (!up.ok || !ud.id) return fail(502, 'youtube upload HTTP ' + up.status + ' ' + JSON.stringify(ud).slice(0, 200));
+      if (ud.status && ud.status.uploadStatus && ud.status.uploadStatus !== 'uploaded') return fail(502, 'youtube rejected upload: ' + ud.status.uploadStatus);
+      const cur = await loadUploads();
+      cur.map[videoUrl] = { state: 'done', ts: Date.now(), youtubeId: ud.id, url: 'https://www.youtube.com/watch?v=' + ud.id };
+      await saveUploads(cur.map, cur.sha).catch(() => {});
       return json(res, 200, { youtubeId: ud.id, url: 'https://www.youtube.com/watch?v=' + ud.id, privacy: 'private' });
     } catch (e) {
+      if (videoUrl) {
+        try {
+          const cur = await loadUploads();
+          if (cur.map[videoUrl] && cur.map[videoUrl].state === 'uploading') {
+            cur.map[videoUrl] = { state: 'failed', ts: Date.now(), error: String(e.message || e).slice(0, 200) };
+            await saveUploads(cur.map, cur.sha);
+          }
+        } catch {}
+      }
       if (e.code === 'needsAuth') return json(res, 401, { error: 'google session expired - sign in again', needsAuth: true });
+      console.error(JSON.stringify({ ts: new Date().toISOString(), op: 'youtube-upload', state: 'failed', message: String(e.message || e).slice(0, 200) }));
       return json(res, 502, { error: String(e.message || e).slice(0, 250) });
     }
   }
@@ -248,4 +345,5 @@ const server = http.createServer(async (req, res) => {
 
   res.writeHead(404); res.end('not found');
 });
-server.listen(PORT, () => console.log('listening', PORT));
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) server.listen(PORT, () => console.log('listening', PORT));
+export default server;
