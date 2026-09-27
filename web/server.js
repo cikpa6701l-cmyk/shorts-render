@@ -226,6 +226,26 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+
+  if (u.pathname === '/privacy') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(`<!doctype html><meta charset="utf-8"><title>Privacy - Shorts AI Studio</title>
+<body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
+<h1>Shorts AI Studio - Privacy Policy</h1>
+<p>Shorts AI Studio is a personal tool for creating and managing short videos for its owner's channels.</p>
+<h2>What we access</h2>
+<p>When you sign in with Google we receive your basic profile (name, email) and, with your explicit consent, permission to upload videos to your own YouTube channel (youtube.upload scope).</p>
+<h2>How we use it</h2>
+<p>Your Google identity keeps your session signed in. A video is uploaded to YouTube only when you explicitly click upload, and uploads are set to private. We store a Google refresh token, encrypted, solely to keep that connection alive. We never store your Google password.</p>
+<h2>Sharing</h2>
+<p>We do not sell, share, or transfer your data to any third party beyond Google/YouTube services you connect yourself.</p>
+<h2>Revoking</h2>
+<p>You can revoke access anytime at myaccount.google.com/permissions. The app then only shows the official Google sign-in prompt.</p>
+<h2>Contact</h2>
+<p>cikpa6701l@gmail.com</p>
+</body>`);
+  }
+
   res.writeHead(404); res.end('not found');
 });
 server.listen(PORT, () => console.log('listening', PORT));
