@@ -1,1 +1,1 @@
-{"id": "mumuj7hq02", "status": "queued", "stage": "Queued on render farm", "ts": 1790477210239}
+{"id":"mumuj7hq02","status":"failed","error":"pixazo submit HTTP 402 | HF: hf generation error: null","ts":1790477248801}
