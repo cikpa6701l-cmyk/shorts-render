@@ -110,7 +110,7 @@ const MOTION = { subtle: 'gentle, subtle motion', moderate: '', dynamic: 'energe
 function dims(ratio, quality) {
   const base = { '16:9': [576, 1024], '1:1': [768, 768], '9:16': [1024, 576] }[ratio] || [1024, 576];
   const q = { fast: 0.8, high: 1.0, ultra: 1.25 }[job.quality] || 1.0;
-  return [Math.round(base[0] * q / 16) * 16, Math.round(base[1] * q / 16) * 16];
+  return [Math.round(base[0] * q / 32) * 32, Math.round(base[1] * q / 32) * 32]; // LTX-2.3 ZeroGPU rejects non-multiples of 32 (returns null video)
 }
 
 async function planScenes(n) {
@@ -211,7 +211,7 @@ async function buildSeg(i, imgBuf, scene, per, hh, ww) {
   try {
     if (ltxUnavailable) throw new Error('LTX-2 unavailable earlier in this job');
     const sp = await hfUpload(imgBuf, 'scene' + i + '.jpg');
-    clip = await hfVideo(sp, scene.motion + ', cinematic realistic motion', Math.min(10, Math.max(3, Math.round(per))), hh, ww, job.enhance);
+    clip = await hfVideo(sp, scene.motion + ', cinematic realistic motion', 6, hh, ww, job.enhance /* LTX-2.3 Space only accepts 6s (5/7/8s error); stream_loop covers scene length */);
   } catch (e) {
     ltxUnavailable = true;
     console.log('[fallback] LTX-2 HF failed, switching to Pixazo ltx-video:', String(e.message || e).slice(0, 160));
